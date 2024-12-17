@@ -15,7 +15,9 @@ library
     ghc-options:      -Wall
     build-depends:
         base ^>=4.20.0.0,
-        aeson
+        aeson,
+        http-client,
+        http-types
 
 executable bevy-remote
     main-is:          Main.hs

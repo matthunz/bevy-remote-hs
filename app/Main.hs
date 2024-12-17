@@ -1,6 +1,6 @@
 module Main where
 
-main :: IO ()
-main = do
-  putStrLn "Hello, Haskell!"
+import Data.Bevy.Remote
 
+main :: IO ()
+main = run list >>= print
