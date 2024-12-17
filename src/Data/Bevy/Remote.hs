@@ -9,6 +9,8 @@ module Data.Bevy.Remote
     transform,
     Query (..),
     fetch,
+    with,
+    without,
     query,
     run,
   )
@@ -26,7 +28,16 @@ import Network.HTTP.Client
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types (methodPost)
 
-data RequestKind = ListRequest | QueryRequest [String] deriving (Show)
+data QueryRequestData = QueryRequestData
+  { queryComponents :: [String],
+    queryOptions :: [String],
+    queryHas :: [String],
+    queryWith :: [String],
+    queryWithout :: [String]
+  }
+  deriving (Show)
+
+data RequestKind = ListRequest | QueryRequest QueryRequestData deriving (Show)
 
 data Request = Request Int RequestKind deriving (Show)
 
@@ -37,12 +48,16 @@ instance ToJSON Request where
         "id" .= i,
         "method" .= ("bevy/list" :: String)
       ]
-  toJSON (Request i (QueryRequest cs)) =
+  toJSON (Request i (QueryRequest d)) =
     object
       [ "jsonrpc" .= ("2.0" :: String),
         "id" .= i,
         "method" .= ("bevy/query" :: String),
-        "params" .= object ["data" .= object ["components" .= cs]]
+        "params"
+          .= object
+            [ "data" .= object ["components" .= queryComponents d],
+              "filter" .= object ["with" .= queryWith d, "without" .= queryWithout d]
+            ]
       ]
 
 data Response a = Response String Int a deriving (Show)
@@ -84,7 +99,9 @@ instance FromJSON Transform where
 transform :: Component Transform
 transform = component "bevy_transform::components::transform::Transform"
 
-newtype Query a = Query {runQuery :: ([String], Object -> Result a)}
+data Filter = ComponentFilter String | WithFilter String | WithoutFilter String deriving (Show)
+
+newtype Query a = Query {runQuery :: ([Filter], Object -> Result a)}
   deriving (Functor)
 
 instance Applicative Query where
@@ -92,7 +109,16 @@ instance Applicative Query where
   Query (ss, f) <*> Query (ss', f') = Query (ss ++ ss', \o -> f o <*> f' o)
 
 fetch :: Component a -> Query a
-fetch (Component name f) = Query ([name], f)
+fetch (Component name f) = Query ([ComponentFilter name], f)
+
+filterQuery :: Filter -> Query ()
+filterQuery f = Query ([f], \_ -> pure ())
+
+with :: Component a -> Query ()
+with (Component name _) = filterQuery (WithFilter name)
+
+without :: Component a -> Query ()
+without (Component name _) = filterQuery (WithoutFilter name)
 
 data QueryData = QueryData Int Object
 
@@ -101,10 +127,16 @@ instance FromJSON QueryData where
 
 data QueryItem a = QueryItem Int a deriving (Show)
 
+filterData :: QueryRequestData -> Filter -> QueryRequestData
+filterData d (ComponentFilter name) = d {queryComponents = name : queryComponents d}
+filterData d (WithFilter name) = d {queryWith = name : queryWith d}
+filterData d (WithoutFilter name) = d {queryWithout = name : queryWithout d}
+
 query :: (MonadIO m) => Query a -> Remote m (Either String ([Result (QueryItem a)]))
 query q =
-  let (names, f) = runQuery q
-   in fmap (\res -> fmap (\(Response _ _ items) -> map (\(QueryData i o) -> fmap (QueryItem i) (f o)) items) res) (req (QueryRequest names))
+  let (fs, f) = runQuery q
+      d = foldl filterData (QueryRequestData [] [] [] [] []) fs
+   in fmap (\res -> fmap (\(Response _ _ items) -> map (\(QueryData i o) -> fmap (QueryItem i) (f o)) items) res) (req (QueryRequest d))
 
 run :: Remote IO a -> IO a
 run r = do
