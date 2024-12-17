@@ -65,26 +65,28 @@ data Response a = Response String Int a deriving (Show)
 instance (FromJSON a) => FromJSON (Response a) where
   parseJSON = withObject "Response" $ \v -> Response <$> v .: "jsonrpc" <*> v .: "id" <*> v .: "result"
 
-data Remote m a = Remote {runRemote :: HTTP.Manager -> String -> Int -> m a}
+data Error = InvalidResponse String | InvalidComponent String deriving (Show)
 
-instance (Functor m) => Functor (Remote m) where
-  fmap f (Remote r) = Remote $ \manager url i -> fmap f (r manager url i)
+data Remote m a = Remote {runRemote :: HTTP.Manager -> String -> Int -> m (Either Error a)}
+  deriving (Functor)
 
-req :: (MonadIO m, FromJSON a) => RequestKind -> Remote m (Either String (Response a))
-req r = Remote $ \manager url i -> liftIO $ do
+req :: (MonadIO m, FromJSON a) => RequestKind -> (Response a -> m (Either Error b)) -> Remote m b
+req r f = Remote $ \manager url i -> do
   let json = encode $ toJSON (Request i r)
-  initialRequest <- parseRequest url
+  initialRequest <- liftIO $ parseRequest url
   let request =
         initialRequest
           { HTTP.method = methodPost,
             HTTP.requestHeaders = [("Content-Type", "application/json")],
             HTTP.requestBody = RequestBodyLBS json
           }
-  response <- httpLbs request manager
-  return $ eitherDecode (HTTP.responseBody response)
+  response <- liftIO $ httpLbs request manager
+  case (eitherDecode (HTTP.responseBody response)) of
+    Left e -> return $ Left (InvalidResponse e)
+    Right res -> f res
 
-list :: (MonadIO m) => Remote m (Either String [String])
-list = fmap (\res -> fmap (\(Response _ _ a) -> a) res) (req ListRequest)
+list :: (MonadIO m) => Remote m [String]
+list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res))
 
 data Component a = Component String (Object -> Result a)
 
@@ -132,13 +134,22 @@ filterData d (ComponentFilter name) = d {queryComponents = name : queryComponent
 filterData d (WithFilter name) = d {queryWith = name : queryWith d}
 filterData d (WithoutFilter name) = d {queryWithout = name : queryWithout d}
 
-query :: (MonadIO m) => Query a -> Remote m (Either String ([Result (QueryItem a)]))
+query :: (MonadIO m) => Query a -> Remote m [QueryItem a]
 query q =
   let (fs, f) = runQuery q
       d = foldl filterData (QueryRequestData [] [] [] [] []) fs
-   in fmap (\res -> fmap (\(Response _ _ items) -> map (\(QueryData i o) -> fmap (QueryItem i) (f o)) items) res) (req (QueryRequest d))
+   in req (QueryRequest d) $ \res -> do
+        let (Response _ _ items) = res
+        return $
+          mapM
+            ( \(QueryData e o) ->
+                case f o of
+                  Error s -> Left (InvalidComponent s)
+                  Success a -> Right $ QueryItem e a
+            )
+            items
 
-run :: Remote IO a -> IO a
+run :: Remote IO a -> IO (Either Error a)
 run r = do
   manager <- newManager defaultManagerSettings
   let url = "http://localhost:15702"
