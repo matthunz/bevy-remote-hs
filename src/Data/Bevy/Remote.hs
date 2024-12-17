@@ -5,6 +5,7 @@ module Data.Bevy.Remote
   ( Remote (..),
     list,
     Component (..),
+    component,
     Transform (..),
     transform,
     Query (..),
