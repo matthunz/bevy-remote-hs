@@ -1,6 +1,19 @@
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Data.Bevy.Remote (Remote (..), list, run) where
+module Data.Bevy.Remote
+  ( Remote (..),
+    list,
+    StorageDesc (..),
+    storageDesc,
+    Component (..),
+    Transform (..),
+    Query (..),
+    fetch,
+    query,
+    run,
+  )
+where
 
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson
@@ -14,7 +27,7 @@ import Network.HTTP.Client
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types (methodPost)
 
-data RequestKind = ListRequest deriving (Show)
+data RequestKind = ListRequest | QueryRequest [String] deriving (Show)
 
 data Request = Request Int RequestKind deriving (Show)
 
@@ -24,6 +37,13 @@ instance ToJSON Request where
       [ "jsonrpc" .= ("2.0" :: String),
         "id" .= i,
         "method" .= ("bevy/list" :: String)
+      ]
+  toJSON (Request i (QueryRequest cs)) =
+    object
+      [ "jsonrpc" .= ("2.0" :: String),
+        "id" .= i,
+        "method" .= ("bevy/query" :: String),
+        "params" .= object ["data" .= object ["components" .= cs]]
       ]
 
 data Response a = Response String Int a deriving (Show)
@@ -51,6 +71,44 @@ req r = Remote $ \manager url i -> liftIO $ do
 
 list :: (MonadIO m) => Remote m (Either String [String])
 list = fmap (\res -> fmap (\(Response _ _ a) -> a) res) (req ListRequest)
+
+data StorageDesc a = StorageDesc String (Object -> Result a)
+
+storageDesc :: (FromJSON a) => String -> StorageDesc a
+storageDesc name = StorageDesc name (fromJSON . Object)
+
+class Component a where
+  storage :: StorageDesc a
+
+data Transform = Transform deriving (Show)
+
+instance FromJSON Transform where
+  parseJSON = withObject "Transform" $ \_ -> pure Transform
+
+instance Component Transform where
+  storage = storageDesc "bevy_transform::components::transform::Transform"
+
+newtype Query a = Query {runQuery :: ([String], Object -> Result a)}
+  deriving (Functor)
+
+instance Applicative Query where
+  pure a = Query ([], \_ -> pure a)
+  Query (ss, f) <*> Query (ss', f') = Query (ss ++ ss', \o -> f o <*> f' o)
+
+fetch :: (Component a) => Query a
+fetch = let StorageDesc name f = storage in Query ([name], f)
+
+data QueryData = QueryData Int Object
+
+instance FromJSON QueryData where
+  parseJSON = withObject "QueryData" $ \v -> QueryData <$> v .: "entity" <*> v .: "components"
+
+data QueryItem a = QueryItem Int a deriving (Show)
+
+query :: (MonadIO m) => Query a -> Remote m (Either String ([Result (QueryItem a)]))
+query q =
+  let (names, f) = runQuery q
+   in fmap (\res -> fmap (\(Response _ _ items) -> map (\(QueryData i o) -> fmap (QueryItem i) (f o)) items) res) (req (QueryRequest names))
 
 run :: Remote IO a -> IO a
 run r = do
