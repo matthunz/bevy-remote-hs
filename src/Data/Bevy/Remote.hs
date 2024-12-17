@@ -4,10 +4,9 @@
 module Data.Bevy.Remote
   ( Remote (..),
     list,
-    StorageDesc (..),
-    storageDesc,
     Component (..),
     Transform (..),
+    transform,
     Query (..),
     fetch,
     query,
@@ -72,21 +71,18 @@ req r = Remote $ \manager url i -> liftIO $ do
 list :: (MonadIO m) => Remote m (Either String [String])
 list = fmap (\res -> fmap (\(Response _ _ a) -> a) res) (req ListRequest)
 
-data StorageDesc a = StorageDesc String (Object -> Result a)
+data Component a = Component String (Object -> Result a)
 
-storageDesc :: (FromJSON a) => String -> StorageDesc a
-storageDesc name = StorageDesc name (fromJSON . Object)
-
-class Component a where
-  storage :: StorageDesc a
+component :: (FromJSON a) => String -> Component a
+component name = Component name (fromJSON . Object)
 
 data Transform = Transform deriving (Show)
 
 instance FromJSON Transform where
   parseJSON = withObject "Transform" $ \_ -> pure Transform
 
-instance Component Transform where
-  storage = storageDesc "bevy_transform::components::transform::Transform"
+transform :: Component Transform
+transform = component "bevy_transform::components::transform::Transform"
 
 newtype Query a = Query {runQuery :: ([String], Object -> Result a)}
   deriving (Functor)
@@ -95,8 +91,8 @@ instance Applicative Query where
   pure a = Query ([], \_ -> pure a)
   Query (ss, f) <*> Query (ss', f') = Query (ss ++ ss', \o -> f o <*> f' o)
 
-fetch :: (Component a) => Query a
-fetch = let StorageDesc name f = storage in Query ([name], f)
+fetch :: Component a -> Query a
+fetch (Component name f) = Query ([name], f)
 
 data QueryData = QueryData Int Object
 
