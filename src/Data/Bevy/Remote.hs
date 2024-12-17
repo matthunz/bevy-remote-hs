@@ -70,6 +70,23 @@ data Error = InvalidResponse String | InvalidComponent String deriving (Show)
 data Remote m a = Remote {runRemote :: HTTP.Manager -> String -> Int -> m (Either Error a)}
   deriving (Functor)
 
+instance (Monad m) => Applicative (Remote m) where
+  pure a = Remote $ \_ _ _ -> pure (pure a)
+  Remote f <*> Remote a = Remote $ \m u i -> do
+    f' <- f m u i
+    a' <- a m u i
+    return $ f' <*> a'
+
+instance (Monad m) => Monad (Remote m) where
+  Remote a >>= f = Remote $ \m u i -> do
+    a' <- a m u i
+    case a' of
+      Left e -> return $ Left e
+      Right a'' -> runRemote (f a'') m u i
+
+instance MonadIO m => MonadIO (Remote m) where
+  liftIO a = Remote $ \_ _ _ -> liftIO $ fmap pure a
+
 req :: (MonadIO m, FromJSON a) => RequestKind -> (Response a -> m (Either Error b)) -> Remote m b
 req r f = Remote $ \manager url i -> do
   let json = encode $ toJSON (Request i r)
