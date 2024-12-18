@@ -12,10 +12,12 @@ module Data.Bevy.Remote
 
     -- * Remote
     Remote (..),
-    request,
+    get,
+    getter,
     list,
     query,
     spawn,
+    request,
 
     -- * Query
     Query (..),
@@ -113,6 +115,27 @@ request method r f = Remote $ \manager url i -> do
   case (eitherDecode (HTTP.responseBody response)) of
     Left e -> return $ Left (InvalidResponse e)
     Right res -> f res
+
+newtype Get a = Get {runGet :: ([String], KM.KeyMap Value -> Result a)}
+  deriving (Functor)
+
+getter :: Component a -> Get a
+getter (Component name f) =
+  Get
+    ( [name],
+      \components -> case (KM.lookup ((K.fromString name)) components) of
+        Just x -> f x
+        Nothing -> Error ("Component " ++ name ++ " not found")
+    )
+
+get :: (MonadIO m) => Int -> Get a -> Remote m a
+get e g =
+  let (fs, f) = runGet g
+   in request "bevy/get" (Just (GetRequest e fs True)) $ \res -> do
+        let (Response _ _ obj) = res
+        return $ case f obj of
+          Error s -> Left (InvalidComponent s)
+          Success a -> Right a
 
 -- | List all spawned entities.
 list :: (MonadIO m) => Remote m [String]

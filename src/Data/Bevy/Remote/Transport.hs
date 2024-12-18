@@ -34,10 +34,21 @@ instance Semigroup Filter where
 newFilter :: Filter
 newFilter = Filter [] [] [] [] []
 
-data RequestKind = ListRequest | QueryRequest Filter | SpawnRequest (KM.KeyMap Value) deriving (Show)
+data RequestKind
+  = GetRequest Int [String] Bool
+  | ListRequest
+  | QueryRequest Filter
+  | SpawnRequest (KM.KeyMap Value)
+  deriving (Show)
 
 instance ToJSON RequestKind where
   toJSON ListRequest = object []
+  toJSON (GetRequest e ids strict) =
+    object
+      [ "entity" .= e,
+        "components" .= ids,
+        "strict" .= strict
+      ]
   toJSON (QueryRequest f) =
     object
       [ "data"

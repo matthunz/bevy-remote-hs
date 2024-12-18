@@ -15,6 +15,8 @@ main =
 
         spawn (bundle cube 1) >>= liftIO . print
 
+        get 4294967322 (getter cube) >>= liftIO . print
+
         query
           ( (,)
               <$> fetch C.visibility
