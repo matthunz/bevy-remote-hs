@@ -12,6 +12,7 @@ module Data.Bevy.Remote
 
     -- * Remote
     Remote (..),
+    request,
     list,
     query,
     spawn,
@@ -92,28 +93,30 @@ instance (Monad m) => Monad (Remote m) where
 instance (MonadIO m) => MonadIO (Remote m) where
   liftIO a = Remote $ \_ _ _ -> liftIO $ fmap pure a
 
-req ::
-  (MonadIO m, FromJSON a) =>
-  RequestKind ->
+-- | Send a BRP request to the server.
+request ::
+  (ToJSON c, MonadIO m, FromJSON a) =>
+  String ->
+  Maybe c ->
   (Response a -> m (Either Error b)) ->
   Remote m b
-req r f = Remote $ \manager url i -> do
-  let json = encode $ toJSON (Request i r)
+request method r f = Remote $ \manager url i -> do
+  let json = encode $ toJSON (Request method i r)
   initialRequest <- liftIO $ parseRequest url
-  let request =
+  let req =
         initialRequest
           { HTTP.method = methodPost,
             HTTP.requestHeaders = [("Content-Type", "application/json")],
             HTTP.requestBody = RequestBodyLBS json
           }
-  response <- liftIO $ httpLbs request manager
+  response <- liftIO $ httpLbs req manager
   case (eitherDecode (HTTP.responseBody response)) of
     Left e -> return $ Left (InvalidResponse e)
     Right res -> f res
 
 -- | List all spawned entities.
 list :: (MonadIO m) => Remote m [String]
-list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res))
+list = fmap (\(Response _ _ a) -> a) (request "bevy/list" (Nothing :: Maybe ()) (\res -> return $ pure res))
 
 newtype Query a = Query {runQuery :: (Filter, Object -> Maybe Object -> Result a)}
   deriving (Functor)
@@ -169,7 +172,7 @@ data QueryItem a = QueryItem Int a deriving (Show)
 query :: (MonadIO m) => Query a -> Remote m [QueryItem a]
 query q =
   let (fs, f) = runQuery q
-   in req (QueryRequest fs) $ \res -> do
+   in request "bevy/query" (Just (QueryRequest fs)) $ \res -> do
         let (Response _ _ items) = res
         return $
           mapM
@@ -185,8 +188,9 @@ spawn :: (MonadIO m) => Bundle -> Remote m Int
 spawn (Bundle components) =
   fmap
     (\(Response _ _ b) -> b)
-    ( req
-        (SpawnRequest components)
+    ( request
+        "bevy/spawn"
+        (Just $ SpawnRequest components)
         (\(Response s i (SpawnResponse e)) -> return $ pure (Response s i e))
     )
 

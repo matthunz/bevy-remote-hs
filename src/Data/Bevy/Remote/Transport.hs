@@ -36,43 +36,37 @@ newFilter = Filter [] [] [] [] []
 
 data RequestKind = ListRequest | QueryRequest Filter | SpawnRequest (KM.KeyMap Value) deriving (Show)
 
-data Request = Request Int RequestKind deriving (Show)
-
-instance ToJSON Request where
-  toJSON (Request i r) =
-    let (method, entries) = case r of
-          ListRequest -> ("bevy/list" :: String, [])
-          QueryRequest d ->
-            ( "bevy/query" :: String,
-              [ "params"
-                  .= object
-                    [ "data"
-                        .= object
-                          [ "components" .= filterComponents d,
-                            "option" .= filterOptions d,
-                            "has" .= filterHas d
-                          ],
-                      "filter"
-                        .= object
-                          [ "with" .= filterWith d,
-                            "without" .= filterWithout d
-                          ]
-                    ]
-              ]
-            )
-          SpawnRequest obj ->
-            ( "bevy/spawn" :: String,
-              [ "params"
-                  .= object ["components" .= obj]
-              ]
-            )
-     in object
-          ( [ "jsonrpc" .= ("2.0" :: String),
-              "id" .= i,
-              "method" .= method
+instance ToJSON RequestKind where
+  toJSON ListRequest = object []
+  toJSON (QueryRequest f) =
+    object
+      [ "data"
+          .= object
+            [ "components" .= filterComponents f,
+              "option" .= filterOptions f,
+              "has" .= filterHas f
+            ],
+        "filter"
+          .= object
+            [ "with" .= filterWith f,
+              "without" .= filterWithout f
             ]
-              ++ entries
-          )
+      ]
+  toJSON (SpawnRequest km) = object ["components" .= km]
+
+data Request a = Request String Int (Maybe a) deriving (Show)
+
+instance (ToJSON a) => ToJSON (Request a) where
+  toJSON (Request method i params) =
+    object
+      ( [ "jsonrpc" .= ("2.0" :: String),
+          "method" .= method,
+          "id" .= i
+        ]
+          ++ case params of
+            Just p -> ["params" .= p]
+            Nothing -> []
+      )
 
 data Response a = Response String Int a deriving (Show)
 
