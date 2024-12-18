@@ -21,8 +21,14 @@ module Data.Bevy.Remote
   )
 where
 
+import Control.Monad ((<=<))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson
+import qualified Data.Aeson.Key as K
+import qualified Data.Aeson.KeyMap as HM
+import Data.Aeson.Types (Parser)
+import qualified Data.Vector as V
+import Linear
 import Network.HTTP.Client
   ( RequestBody (RequestBodyLBS),
     defaultManagerSettings,
@@ -134,12 +140,58 @@ list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res
 data Component a = Component String (Object -> Result a)
 
 component :: (FromJSON a) => String -> Component a
-component name = Component name (fromJSON . Object)
+component name = Component name (fromJSON <=< lookupKey name)
+  where
+    lookupKey :: String -> Object -> Result Value
+    lookupKey key obj =
+      maybe
+        (Error $ "Component '" ++ key ++ "' not found")
+        Success
+        (HM.lookup ((K.fromString key)) obj)
 
-data Transform = Transform deriving (Show)
+data Transform = Transform
+  { transformScale :: V3 Float,
+    transformTranslation :: V3 Float,
+    transformRotation :: V4 Float
+  }
+  deriving (Show)
+
+parseV3 :: (FromJSON a) => Value -> Parser (V3 a)
+parseV3 (Array v) = do
+  let e1 = v V.!? 0
+      e2 = v V.!? 1
+      e3 = v V.!? 2
+  case (e1, e2, e3) of
+    (Just v1, Just v2, Just v3) ->
+      V3
+        <$> parseJSON v1
+        <*> parseJSON v2
+        <*> parseJSON v3
+    _ -> fail "Expected an array of exactly 3 elements"
+parseV3 _ = fail "Expected a JSON array of length 3"
+
+parseV4 :: (FromJSON a) => Value -> Parser (V4 a)
+parseV4 (Array v) = do
+  let e1 = v V.!? 0
+      e2 = v V.!? 1
+      e3 = v V.!? 2
+      e4 = v V.!? 3
+  case (e1, e2, e3, e4) of
+    (Just v1, Just v2, Just v3, Just v4) ->
+      V4
+        <$> parseJSON v1
+        <*> parseJSON v2
+        <*> parseJSON v3
+        <*> parseJSON v4
+    _ -> fail "Expected an array of exactly 4 elements"
+parseV4 _ = fail "Expected a JSON array of length 4"
 
 instance FromJSON Transform where
-  parseJSON = withObject "Transform" $ \_ -> pure Transform
+  parseJSON = withObject "Transform" $ \v -> do
+    scale <- v .: "scale" >>= parseV3
+    t <- v .: "translation" >>= parseV3
+    rotation <- v .: "rotation" >>= parseV4
+    return $ Transform scale t rotation
 
 transform :: Component Transform
 transform = component "bevy_transform::components::transform::Transform"

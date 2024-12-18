@@ -17,7 +17,9 @@ library
         base >=4,
         aeson,
         http-client,
-        http-types
+        http-types,
+        linear >=1,
+        vector
 
 executable bevy-remote
     main-is:          Main.hs
