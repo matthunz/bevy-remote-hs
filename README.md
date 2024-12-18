@@ -15,12 +15,11 @@ cube = component "server::Cube"
 main :: IO ()
 main =
   run
-    ( query
-        ( (,)
-            <$> fetch C.transform
-            <*> has cube
-            <* with C.visibility
-        )
+    ( query $
+        (,)
+          <$> fetch C.transform
+          <*> has cube
+          <* with C.visibility
     )
     >>= print
 ```
