@@ -9,6 +9,7 @@ module Data.Bevy.Remote
     Query (..),
     fetch,
     fetchMaybe,
+    has,
     with,
     without,
     query,
@@ -68,7 +69,8 @@ instance ToJSON Request where
                     [ "data"
                         .= object
                           [ "components" .= filterComponents d,
-                            "option" .= filterOptions d
+                            "option" .= filterOptions d,
+                            "has" .= filterHas d
                           ],
                       "filter"
                         .= object
@@ -141,18 +143,18 @@ data Component a = Component String (Value -> Result a)
 component :: (FromJSON a) => String -> Component a
 component name = Component name fromJSON
 
-newtype Query a = Query {runQuery :: (Filter, Object -> Result a)}
+newtype Query a = Query {runQuery :: (Filter, Object -> Maybe Object -> Result a)}
   deriving (Functor)
 
 instance Applicative Query where
-  pure a = Query (newFilter, \_ -> pure a)
-  Query (ss, f) <*> Query (ss', f') = Query (ss <> ss', \o -> f o <*> f' o)
+  pure a = Query (newFilter, \_ _ -> pure a)
+  Query (ss, f) <*> Query (ss', f') = Query (ss <> ss', \o hasObj -> f o hasObj <*> f' o hasObj)
 
 fetch :: Component a -> Query a
 fetch (Component name f) =
   Query
     ( newFilter {filterComponents = [name]},
-      \o -> case (KM.lookup ((K.fromString name)) o) of
+      \o _ -> case (KM.lookup ((K.fromString name)) o) of
         Just x -> f x
         Nothing -> Error ("Component " ++ name ++ " not found")
     )
@@ -161,13 +163,22 @@ fetchMaybe :: Component a -> Query (Maybe a)
 fetchMaybe (Component name f) =
   Query
     ( newFilter {filterOptions = [name]},
-      \o -> case KM.lookup ((K.fromString name)) o of
+      \o _ -> case KM.lookup ((K.fromString name)) o of
         Just x -> f x >>= pure . Just
         Nothing -> pure Nothing
     )
 
+has :: Component a -> Query (Bool)
+has (Component name _) =
+  Query
+    ( newFilter {filterHas = [name]},
+      \_ o -> case o >>= KM.lookup ((K.fromString name)) of
+        Just (Bool b) -> pure b
+        _ -> Error "Expected a boolean value for `has` component."
+    )
+
 filterQuery :: Filter -> Query ()
-filterQuery f = Query (f, \_ -> pure ())
+filterQuery f = Query (f, \_ _ -> pure ())
 
 with :: Component a -> Query ()
 with (Component name _) = filterQuery (newFilter {filterWith = [name]})
@@ -175,10 +186,14 @@ with (Component name _) = filterQuery (newFilter {filterWith = [name]})
 without :: Component a -> Query ()
 without (Component name _) = filterQuery (newFilter {filterWithout = [name]})
 
-data QueryData = QueryData Int Object
+data QueryData = QueryData Int Object (Maybe Object)
 
 instance FromJSON QueryData where
-  parseJSON = withObject "QueryData" $ \v -> QueryData <$> v .: "entity" <*> v .: "components"
+  parseJSON = withObject "QueryData" $ \v ->
+    QueryData
+      <$> v .: "entity"
+      <*> v .: "components"
+      <*> v .: "has"
 
 data QueryItem a = QueryItem Int a deriving (Show)
 
@@ -189,8 +204,8 @@ query q =
         let (Response _ _ items) = res
         return $
           mapM
-            ( \(QueryData e o) ->
-                case f o of
+            ( \(QueryData e o hasObj) ->
+                case f o hasObj of
                   Error s -> Left (InvalidComponent s)
                   Success a -> Right $ QueryItem e a
             )

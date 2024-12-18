@@ -16,7 +16,7 @@ main =
         query
           ( (,)
               <$> fetch C.transform
-              <*> fetchMaybe C.transform
+              <*> has cube
               <* with cube
           )
           >>= liftIO . print
