@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.Bevy.Remote
   ( Remote (..),
@@ -13,6 +14,9 @@ module Data.Bevy.Remote
     with,
     without,
     query,
+    Bundle (..),
+    bundle,
+    spawn,
     Client (..),
     newClient,
     newClientWith,
@@ -54,7 +58,7 @@ instance Semigroup Filter where
 newFilter :: Filter
 newFilter = Filter [] [] [] [] []
 
-data RequestKind = ListRequest | QueryRequest Filter deriving (Show)
+data RequestKind = ListRequest | QueryRequest Filter | SpawnRequest (KM.KeyMap Value) deriving (Show)
 
 data Request = Request Int RequestKind deriving (Show)
 
@@ -80,6 +84,12 @@ instance ToJSON Request where
                     ]
               ]
             )
+          SpawnRequest obj ->
+            ( "bevy/spawn" :: String,
+              [ "params"
+                  .= object ["components" .= obj]
+              ]
+            )
      in object
           ( [ "jsonrpc" .= ("2.0" :: String),
               "id" .= i,
@@ -91,8 +101,15 @@ instance ToJSON Request where
 data Response a = Response String Int a deriving (Show)
 
 instance (FromJSON a) => FromJSON (Response a) where
-  parseJSON = withObject "Response" $ \v ->
-    Response <$> v .: "jsonrpc" <*> v .: "id" <*> v .: "result"
+  parseJSON = withObject "Response" $ \v -> do
+    jsonrpc <- v .: "jsonrpc"
+    i <- v .: "id"
+    result <- v .:? "result"
+    (e :: Maybe Value) <- v .:? "error"
+    case (result, e) of
+      (Just r, Nothing) -> return $ Response jsonrpc i r
+      (_, Just e') -> fail $ show e'
+      (Nothing, Nothing) -> fail "Both result and error are missing"
 
 data Error = InvalidResponse String | InvalidComponent String deriving (Show)
 
@@ -210,6 +227,34 @@ query q =
                   Success a -> Right $ QueryItem e a
             )
             items
+
+data Bundle = Bundle (KM.KeyMap Value)
+
+instance Monoid Bundle where
+  mempty = Bundle mempty
+
+instance Semigroup Bundle where
+  Bundle a <> Bundle b = Bundle (a <> b)
+
+instance ToJSON Bundle where
+  toJSON (Bundle o) = toJSON o
+
+bundle :: (ToJSON a) => Component a -> a -> Bundle
+bundle (Component name _) a = Bundle $ KM.singleton (K.fromString name) (toJSON a)
+
+data SpawnResponse = SpawnResponse Int deriving (Show)
+
+instance FromJSON SpawnResponse where
+  parseJSON = withObject "SpawnResponse" $ \v -> SpawnResponse <$> v .: "entity"
+
+spawn :: (MonadIO m) => Bundle -> Remote m Int
+spawn (Bundle components) =
+  fmap
+    (\(Response _ _ b) -> b)
+    ( req
+        (SpawnRequest components)
+        (\(Response s i (SpawnResponse e)) -> return $ pure (Response s i e))
+    )
 
 data Client = Client
   { clientManager :: HTTP.Manager,
