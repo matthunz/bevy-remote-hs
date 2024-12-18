@@ -152,11 +152,13 @@ req r f = Remote $ \manager url i -> do
     Left e -> return $ Left (InvalidResponse e)
     Right res -> f res
 
+-- | List all spawned entities.
 list :: (MonadIO m) => Remote m [String]
 list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res))
 
 data Component a = Component String (Value -> Result a)
 
+-- | Create a component marker from its ID.
 component :: (FromJSON a) => String -> Component a
 component name = Component name fromJSON
 
@@ -167,6 +169,7 @@ instance Applicative Query where
   pure a = Query (newFilter, \_ _ -> pure a)
   Query (ss, f) <*> Query (ss', f') = Query (ss <> ss', \o hasObj -> f o hasObj <*> f' o hasObj)
 
+-- | Fetch a component from a spawned entity.
 fetch :: Component a -> Query a
 fetch (Component name f) =
   Query
@@ -176,6 +179,7 @@ fetch (Component name f) =
         Nothing -> Error ("Component " ++ name ++ " not found")
     )
 
+-- | Optionally fetch a component from a spawned entity.
 fetchMaybe :: Component a -> Query (Maybe a)
 fetchMaybe (Component name f) =
   Query
@@ -185,7 +189,10 @@ fetchMaybe (Component name f) =
         Nothing -> pure Nothing
     )
 
-has :: Component a -> Query (Bool)
+-- |
+-- Query for the existence of a component on a spawned entity,
+-- returning `True` if it is present.
+has :: Component a -> Query Bool
 has (Component name _) =
   Query
     ( newFilter {filterHas = [name]},
@@ -214,6 +221,7 @@ instance FromJSON QueryData where
 
 data QueryItem a = QueryItem Int a deriving (Show)
 
+-- | Query the ECS, returning a list of matching items.
 query :: (MonadIO m) => Query a -> Remote m [QueryItem a]
 query q =
   let (fs, f) = runQuery q
@@ -228,6 +236,7 @@ query q =
             )
             items
 
+-- | Bundle of components.
 data Bundle = Bundle (KM.KeyMap Value)
 
 instance Monoid Bundle where
@@ -239,6 +248,7 @@ instance Semigroup Bundle where
 instance ToJSON Bundle where
   toJSON (Bundle o) = toJSON o
 
+-- | Create a bundle from a component.
 bundle :: (ToJSON a) => Component a -> a -> Bundle
 bundle (Component name _) a = Bundle $ KM.singleton (K.fromString name) (toJSON a)
 
@@ -247,6 +257,7 @@ data SpawnResponse = SpawnResponse Int deriving (Show)
 instance FromJSON SpawnResponse where
   parseJSON = withObject "SpawnResponse" $ \v -> SpawnResponse <$> v .: "entity"
 
+-- | Spawn a bundle of components.
 spawn :: (MonadIO m) => Bundle -> Remote m Int
 spawn (Bundle components) =
   fmap
