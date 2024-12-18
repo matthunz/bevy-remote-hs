@@ -13,6 +13,10 @@ module Data.Bevy.Remote
     with,
     without,
     query,
+    Client (..),
+    newClient,
+    newClientWith,
+    runClient,
     run,
   )
 where
@@ -85,7 +89,7 @@ instance (Monad m) => Monad (Remote m) where
       Left e -> return $ Left e
       Right a'' -> runRemote (f a'') m u i
 
-instance MonadIO m => MonadIO (Remote m) where
+instance (MonadIO m) => MonadIO (Remote m) where
   liftIO a = Remote $ \_ _ _ -> liftIO $ fmap pure a
 
 req :: (MonadIO m, FromJSON a) => RequestKind -> (Response a -> m (Either Error b)) -> Remote m b
@@ -167,8 +171,21 @@ query q =
             )
             items
 
-run :: Remote IO a -> IO (Either Error a)
-run r = do
+data Client = Client
+  { clientManager :: HTTP.Manager,
+    clientURL :: String
+  }
+
+newClientWith :: HTTP.Manager -> Client
+newClientWith m = Client m "http://localhost:15702"
+
+newClient :: IO Client
+newClient = do
   manager <- newManager defaultManagerSettings
-  let url = "http://localhost:15702"
-  runRemote r manager url 1
+  return $ newClientWith manager
+
+runClient :: Remote m a -> Client -> m (Either Error a)
+runClient r (Client manager url) = runRemote r manager url 1
+
+run :: (MonadIO m) => Remote m a -> m (Either Error a)
+run r = liftIO newClient >>= runClient r
