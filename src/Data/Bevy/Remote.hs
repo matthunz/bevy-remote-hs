@@ -29,6 +29,7 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
+import Data.Bevy.Remote.Transport
 import Network.HTTP.Client
   ( RequestBody (RequestBodyLBS),
     defaultManagerSettings,
@@ -38,78 +39,6 @@ import Network.HTTP.Client
   )
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types (methodPost)
-
-data Filter = Filter
-  { filterComponents :: [String],
-    filterOptions :: [String],
-    filterHas :: [String],
-    filterWith :: [String],
-    filterWithout :: [String]
-  }
-  deriving (Show)
-
-instance Monoid Filter where
-  mempty = newFilter
-
-instance Semigroup Filter where
-  Filter a b c d e <> Filter a' b' c' d' e' =
-    Filter (a <> a') (b <> b') (c <> c') (d <> d') (e <> e')
-
-newFilter :: Filter
-newFilter = Filter [] [] [] [] []
-
-data RequestKind = ListRequest | QueryRequest Filter | SpawnRequest (KM.KeyMap Value) deriving (Show)
-
-data Request = Request Int RequestKind deriving (Show)
-
-instance ToJSON Request where
-  toJSON (Request i r) =
-    let (method, entries) = case r of
-          ListRequest -> ("bevy/list" :: String, [])
-          QueryRequest d ->
-            ( "bevy/query" :: String,
-              [ "params"
-                  .= object
-                    [ "data"
-                        .= object
-                          [ "components" .= filterComponents d,
-                            "option" .= filterOptions d,
-                            "has" .= filterHas d
-                          ],
-                      "filter"
-                        .= object
-                          [ "with" .= filterWith d,
-                            "without" .= filterWithout d
-                          ]
-                    ]
-              ]
-            )
-          SpawnRequest obj ->
-            ( "bevy/spawn" :: String,
-              [ "params"
-                  .= object ["components" .= obj]
-              ]
-            )
-     in object
-          ( [ "jsonrpc" .= ("2.0" :: String),
-              "id" .= i,
-              "method" .= method
-            ]
-              ++ entries
-          )
-
-data Response a = Response String Int a deriving (Show)
-
-instance (FromJSON a) => FromJSON (Response a) where
-  parseJSON = withObject "Response" $ \v -> do
-    jsonrpc <- v .: "jsonrpc"
-    i <- v .: "id"
-    result <- v .:? "result"
-    (e :: Maybe Value) <- v .:? "error"
-    case (result, e) of
-      (Just r, Nothing) -> return $ Response jsonrpc i r
-      (_, Just e') -> fail $ show e'
-      (Nothing, Nothing) -> fail "Both result and error are missing"
 
 data Error = InvalidResponse String | InvalidComponent String deriving (Show)
 
@@ -210,15 +139,6 @@ with (Component name _) = filterQuery (newFilter {filterWith = [name]})
 without :: Component a -> Query ()
 without (Component name _) = filterQuery (newFilter {filterWithout = [name]})
 
-data QueryData = QueryData Int Object (Maybe Object)
-
-instance FromJSON QueryData where
-  parseJSON = withObject "QueryData" $ \v ->
-    QueryData
-      <$> v .: "entity"
-      <*> v .: "components"
-      <*> v .: "has"
-
 data QueryItem a = QueryItem Int a deriving (Show)
 
 -- | Query the ECS, returning a list of matching items.
@@ -251,11 +171,6 @@ instance ToJSON Bundle where
 -- | Create a bundle from a component.
 bundle :: (ToJSON a) => Component a -> a -> Bundle
 bundle (Component name _) a = Bundle $ KM.singleton (K.fromString name) (toJSON a)
-
-data SpawnResponse = SpawnResponse Int deriving (Show)
-
-instance FromJSON SpawnResponse where
-  parseJSON = withObject "SpawnResponse" $ \v -> SpawnResponse <$> v .: "entity"
 
 -- | Spawn a bundle of components.
 spawn :: (MonadIO m) => Bundle -> Remote m Int
