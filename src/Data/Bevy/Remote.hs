@@ -47,23 +47,29 @@ data RequestKind = ListRequest | QueryRequest QueryRequestData deriving (Show)
 data Request = Request Int RequestKind deriving (Show)
 
 instance ToJSON Request where
-  toJSON (Request i ListRequest) =
-    object
-      [ "jsonrpc" .= ("2.0" :: String),
-        "id" .= i,
-        "method" .= ("bevy/list" :: String)
-      ]
-  toJSON (Request i (QueryRequest d)) =
-    object
-      [ "jsonrpc" .= ("2.0" :: String),
-        "id" .= i,
-        "method" .= ("bevy/query" :: String),
-        "params"
-          .= object
-            [ "data" .= object ["components" .= queryComponents d],
-              "filter" .= object ["with" .= queryWith d, "without" .= queryWithout d]
+  toJSON (Request i r) =
+    let (method, entries) = case r of
+          ListRequest -> ("bevy/list" :: String, [])
+          QueryRequest d ->
+            ( "bevy/query" :: String,
+              [ "params"
+                  .= object
+                    [ "data" .= object ["components" .= queryComponents d],
+                      "filter"
+                        .= object
+                          [ "with" .= queryWith d,
+                            "without" .= queryWithout d
+                          ]
+                    ]
+              ]
+            )
+     in object
+          ( [ "jsonrpc" .= ("2.0" :: String),
+              "id" .= i,
+              "method" .= method
             ]
-      ]
+              ++ entries
+          )
 
 data Response a = Response String Int a deriving (Show)
 
