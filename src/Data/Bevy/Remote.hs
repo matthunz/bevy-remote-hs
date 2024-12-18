@@ -1,22 +1,30 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Data.Bevy.Remote
-  ( Remote (..),
-    list,
+  ( -- * Component
     Component (..),
     component,
+
+    -- * Bundle
+    Bundle (..),
+    bundle,
+
+    -- * Remote
+    Remote (..),
+    list,
+    query,
+    spawn,
+
+    -- * Query
     Query (..),
     fetch,
     fetchMaybe,
     has,
     with,
     without,
-    query,
-    Bundle (..),
-    bundle,
-    spawn,
+
+    -- * Client
     Client (..),
     newClient,
     newClientWith,
@@ -39,6 +47,28 @@ import Network.HTTP.Client
   )
 import qualified Network.HTTP.Client as HTTP
 import Network.HTTP.Types (methodPost)
+
+data Component a = Component String (Value -> Result a)
+
+-- | Create a component marker from its ID.
+component :: (FromJSON a) => String -> Component a
+component name = Component name fromJSON
+
+-- | Bundle of components.
+data Bundle = Bundle (KM.KeyMap Value)
+
+instance Monoid Bundle where
+  mempty = Bundle mempty
+
+instance Semigroup Bundle where
+  Bundle a <> Bundle b = Bundle (a <> b)
+
+instance ToJSON Bundle where
+  toJSON (Bundle o) = toJSON o
+
+-- | Create a bundle from a component.
+bundle :: (ToJSON a) => Component a -> a -> Bundle
+bundle (Component name _) a = Bundle $ KM.singleton (K.fromString name) (toJSON a)
 
 data Error = InvalidResponse String | InvalidComponent String deriving (Show)
 
@@ -84,12 +114,6 @@ req r f = Remote $ \manager url i -> do
 -- | List all spawned entities.
 list :: (MonadIO m) => Remote m [String]
 list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res))
-
-data Component a = Component String (Value -> Result a)
-
--- | Create a component marker from its ID.
-component :: (FromJSON a) => String -> Component a
-component name = Component name fromJSON
 
 newtype Query a = Query {runQuery :: (Filter, Object -> Maybe Object -> Result a)}
   deriving (Functor)
@@ -155,22 +179,6 @@ query q =
                   Success a -> Right $ QueryItem e a
             )
             items
-
--- | Bundle of components.
-data Bundle = Bundle (KM.KeyMap Value)
-
-instance Monoid Bundle where
-  mempty = Bundle mempty
-
-instance Semigroup Bundle where
-  Bundle a <> Bundle b = Bundle (a <> b)
-
-instance ToJSON Bundle where
-  toJSON (Bundle o) = toJSON o
-
--- | Create a bundle from a component.
-bundle :: (ToJSON a) => Component a -> a -> Bundle
-bundle (Component name _) a = Bundle $ KM.singleton (K.fromString name) (toJSON a)
 
 -- | Spawn a bundle of components.
 spawn :: (MonadIO m) => Bundle -> Remote m Int
