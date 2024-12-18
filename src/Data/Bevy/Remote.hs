@@ -10,6 +10,7 @@ module Data.Bevy.Remote
     transform,
     Query (..),
     fetch,
+    fetchMaybe,
     with,
     without,
     query,
@@ -21,7 +22,6 @@ module Data.Bevy.Remote
   )
 where
 
-import Control.Monad ((<=<))
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson
 import qualified Data.Aeson.Key as K
@@ -70,7 +70,11 @@ instance ToJSON Request where
             ( "bevy/query" :: String,
               [ "params"
                   .= object
-                    [ "data" .= object ["components" .= filterComponents d],
+                    [ "data"
+                        .= object
+                          [ "components" .= filterComponents d,
+                            "option" .= filterOptions d
+                          ],
                       "filter"
                         .= object
                           [ "with" .= filterWith d,
@@ -137,17 +141,10 @@ req r f = Remote $ \manager url i -> do
 list :: (MonadIO m) => Remote m [String]
 list = fmap (\(Response _ _ a) -> a) (req ListRequest (\res -> return $ pure res))
 
-data Component a = Component String (Object -> Result a)
+data Component a = Component String (Value -> Result a)
 
 component :: (FromJSON a) => String -> Component a
-component name = Component name (fromJSON <=< lookupKey name)
-  where
-    lookupKey :: String -> Object -> Result Value
-    lookupKey key obj =
-      maybe
-        (Error $ "Component '" ++ key ++ "' not found")
-        Success
-        (HM.lookup ((K.fromString key)) obj)
+component name = Component name fromJSON
 
 data Transform = Transform
   { transformScale :: V3 Float,
@@ -204,7 +201,22 @@ instance Applicative Query where
   Query (ss, f) <*> Query (ss', f') = Query (ss <> ss', \o -> f o <*> f' o)
 
 fetch :: Component a -> Query a
-fetch (Component name f) = Query (newFilter {filterComponents = [name]}, f)
+fetch (Component name f) =
+  Query
+    ( newFilter {filterComponents = [name]},
+      \o -> case (HM.lookup ((K.fromString name)) o) of
+        Just x -> f x
+        Nothing -> Error ("Component " ++ name ++ " not found")
+    )
+
+fetchMaybe :: Component a -> Query (Maybe a)
+fetchMaybe (Component name f) =
+  Query
+    ( newFilter {filterOptions = [name]},
+      \o -> case HM.lookup ((K.fromString name)) o of
+        Just x -> f x >>= pure . Just
+        Nothing -> pure Nothing
+    )
 
 filterQuery :: Filter -> Query ()
 filterQuery f = Query (f, \_ -> pure ())

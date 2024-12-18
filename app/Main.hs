@@ -12,6 +12,12 @@ main =
     ( do
         list >>= liftIO . print
 
-        query (fetch transform <* with cube) >>= liftIO . print
+        query
+          ( (,)
+              <$> fetch transform
+              <*> fetchMaybe transform
+              <* with cube
+          )
+          >>= liftIO . print
     )
     >>= print
