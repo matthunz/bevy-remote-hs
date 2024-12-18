@@ -13,11 +13,20 @@ module Data.Bevy.Remote
     -- * Remote
     Remote (..),
     get,
-    getter,
     list,
     query,
     spawn,
+    getWatch,
     request,
+
+    -- * Get
+    Get (..),
+    getter,
+
+    -- * GetWatch
+    GetWatch (..),
+    Watch (..),
+    watch,
 
     -- * Query
     Query (..),
@@ -41,6 +50,7 @@ import Data.Aeson
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import Data.Bevy.Remote.Transport
+import Data.List (find)
 import Network.HTTP.Client
   ( RequestBody (RequestBodyLBS),
     defaultManagerSettings,
@@ -116,26 +126,25 @@ request method r f = Remote $ \manager url i -> do
     Left e -> return $ Left (InvalidResponse e)
     Right res -> f res
 
-newtype Get a = Get {runGet :: ([String], KM.KeyMap Value -> Result a)}
+data Get a = Get [String] (KM.KeyMap Value -> Result a)
   deriving (Functor)
 
 getter :: Component a -> Get a
 getter (Component name f) =
   Get
-    ( [name],
-      \components -> case (KM.lookup ((K.fromString name)) components) of
+    [name]
+    ( \components -> case (KM.lookup ((K.fromString name)) components) of
         Just x -> f x
         Nothing -> Error ("Component " ++ name ++ " not found")
     )
 
 get :: (MonadIO m) => Int -> Get a -> Remote m a
-get e g =
-  let (fs, f) = runGet g
-   in request "bevy/get" (Just (GetRequest e fs True)) $ \res -> do
-        let (Response _ _ obj) = res
-        return $ case f obj of
-          Error s -> Left (InvalidComponent s)
-          Success a -> Right a
+get e (Get names f) = request "bevy/get" (Just (GetRequest e names True)) $
+  \res -> do
+    let (Response _ _ obj) = res
+    return $ case f obj of
+      Error s -> Left (InvalidComponent s)
+      Success a -> Right a
 
 -- | List all spawned entities.
 list :: (MonadIO m) => Remote m [String]
@@ -216,6 +225,35 @@ spawn (Bundle components) =
         (Just $ SpawnRequest components)
         (\(Response s i (SpawnResponse e)) -> return $ pure (Response s i e))
     )
+
+data GetWatch a = GetWatch [String] (KM.KeyMap Value -> [String] -> Result a)
+  deriving (Functor)
+
+instance Applicative GetWatch where
+  pure a = GetWatch [] (\_ _ -> pure a)
+  GetWatch a f <*> GetWatch a' f' = GetWatch (a <> a') (\o r -> f o r <*> f' o r)
+
+data Watch a = Changed a | Unchanged | Removed deriving (Show)
+
+watch :: Component a -> GetWatch (Watch a)
+watch (Component name f) =
+  GetWatch
+    [name]
+    ( \changed removed -> case (KM.lookup ((K.fromString name)) changed) of
+        Just x -> fmap Changed $ f x
+        Nothing -> case find (== name) removed of
+          Just _ -> pure Removed
+          Nothing -> pure Unchanged
+    )
+
+-- | Watch the values of one or more components from an entity.
+getWatch :: (MonadIO m) => Int -> GetWatch a -> Remote m a
+getWatch e (GetWatch names f) = request "bevy/get+watch" (Just (GetRequest e names True)) $
+  \res -> do
+    let (Response _ _ (GetWatchResponse changed removed)) = res
+    return $ case f changed removed of
+      Error s -> Left (InvalidComponent s)
+      Success a -> Right a
 
 data Client = Client
   { clientManager :: HTTP.Manager,

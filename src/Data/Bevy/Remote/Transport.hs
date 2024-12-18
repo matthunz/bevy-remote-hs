@@ -8,6 +8,7 @@ module Data.Bevy.Remote.Transport
     RequestKind (..),
     Request (..),
     Response (..),
+    GetWatchResponse (..),
     SpawnResponse (..),
   )
 where
@@ -91,6 +92,12 @@ instance (FromJSON a) => FromJSON (Response a) where
       (Just r, Nothing) -> return $ Response jsonrpc i r
       (_, Just e') -> fail $ show e'
       (Nothing, Nothing) -> fail "Both result and error are missing"
+
+data GetWatchResponse = GetWatchResponse (KM.KeyMap Value) [String] deriving (Show)
+
+instance FromJSON GetWatchResponse where
+  parseJSON = withObject "GetWatchResponse" $ \v ->
+    GetWatchResponse <$> v .: "components" <*> v .: "removed"
 
 data QueryData = QueryData Int Object (Maybe Object)
 

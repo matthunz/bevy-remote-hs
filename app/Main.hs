@@ -15,7 +15,7 @@ main =
 
         spawn (bundle cube 1) >>= liftIO . print
 
-        get 4294967322 (getter cube) >>= liftIO . print
+        getWatch 4294967322 (watch cube) >>= liftIO . print
 
         query
           ( (,)
