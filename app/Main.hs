@@ -17,7 +17,7 @@ main =
 
         query
           ( (,)
-              <$> fetch C.transform
+              <$> fetch C.visibility
               <*> has cube
               <* with cube
           )

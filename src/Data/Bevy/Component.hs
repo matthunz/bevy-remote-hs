@@ -3,6 +3,8 @@
 module Data.Bevy.Component
   ( Transform (..),
     transform,
+    Visibility (..),
+    visibility,
   )
 where
 
@@ -18,6 +20,30 @@ data Transform = Transform
     transformRotation :: V4 Float
   }
   deriving (Show)
+
+instance FromJSON Transform where
+  parseJSON = withObject "Transform" $ \v -> do
+    scale <- v .: "scale" >>= parseV3
+    t <- v .: "translation" >>= parseV3
+    rotation <- v .: "rotation" >>= parseV4
+    return $ Transform scale t rotation
+
+transform :: Component Transform
+transform = component "bevy_transform::components::transform::Transform"
+
+data Visibility = Inherited | Visible | Hidden | Collapsed
+  deriving (Show)
+
+instance FromJSON Visibility where
+  parseJSON = withText "Visibility" $ \s -> case s of
+    "Inherited" -> return Inherited
+    "Visible" -> return Visible
+    "Hidden" -> return Hidden
+    "Collapsed" -> return Collapsed
+    _ -> fail "Invalid visibility"
+
+visibility :: Component Visibility
+visibility = component "bevy_render::view::visibility::Visibility"
 
 parseV3 :: (FromJSON a) => Value -> Parser (V3 a)
 parseV3 (Array v) = do
@@ -48,13 +74,3 @@ parseV4 (Array v) = do
         <*> parseJSON v4
     _ -> fail "Expected an array of exactly 4 elements"
 parseV4 _ = fail "Expected a JSON array of length 4"
-
-instance FromJSON Transform where
-  parseJSON = withObject "Transform" $ \v -> do
-    scale <- v .: "scale" >>= parseV3
-    t <- v .: "translation" >>= parseV3
-    rotation <- v .: "rotation" >>= parseV4
-    return $ Transform scale t rotation
-
-transform :: Component Transform
-transform = component "bevy_transform::components::transform::Transform"

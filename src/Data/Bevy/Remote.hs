@@ -95,11 +95,11 @@ instance (MonadIO m) => MonadIO (Remote m) where
 
 -- | Send a BRP request to the server.
 request ::
-  (ToJSON c, MonadIO m, FromJSON a) =>
+  (ToJSON a, FromJSON b, MonadIO m) =>
   String ->
-  Maybe c ->
-  (Response a -> m (Either Error b)) ->
-  Remote m b
+  Maybe a ->
+  (Response b -> m (Either Error c)) ->
+  Remote m c
 request method r f = Remote $ \manager url i -> do
   let json = encode $ toJSON (Request method i r)
   initialRequest <- liftIO $ parseRequest url
